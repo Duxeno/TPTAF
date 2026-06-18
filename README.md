@@ -30,7 +30,7 @@ TPTAF/
 ├── data/        # Dataset scripts and links (to be released)
 ├── src/         # Implementation code (to be released)
 └── README.md    # Project overview and instructions
-)
+
 * `docs/release_plan.md` - provides a roadmap of the progressive releases and instructions on how to cite this work.
 * `configs/` - will contain example configuration files for training and evaluation.
 * `models/` - will host trained model weights once released.
