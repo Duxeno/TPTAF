@@ -24,18 +24,17 @@ The repository currently contains placeholders for these components. Please chec
 
 ```
 TPTAF/
-├── docs/               # Documentation, release plan and paper details
-├── configs/            # Configuration files (to be released)
-├── models/             # Pre‑trained model weights (to be released)
-├── data/               # Dataset preparation scripts and links (to be released)
-├── src/                # Source code for networks and training (to be released)
-└── README.md           # Project overview and instructions
-```
-
-* `docs/release_plan.md` – provides a roadmap of the progressive releases and guidance on how to cite the work.
-* `configs/` – will include task‑specific configuration files for infrared–visible fusion, camera–LiDAR fusion and camera–radar fusion.
-* `models/` – will host trained weights for each modality pair.
-* `src/` – will contain the PyTorch implementation of TPTAF, including detection‑prior extraction, tripartite attention modules and training scripts.
+├── ├── docs/        # Documentation and release plan
+├── configs/     # Configuration files (to be released)
+├── models/      # Model weights (to be released)
+├── data/        # Dataset scripts and links (to be released)
+├── src/         # Implementation code (to be released)
+└── README.md    # Project overview and instructions
+)
+* `docs/release_plan.md` - provides a roadmap of the progressive releases and instructions on how to cite this work.
+* `configs/` - will contain example configuration files for training and evaluation.
+* `models/` - will host trained model weights once released.
+* `src/` - will include the high-level implementation modules and scripts.
 
 ## Getting Started (To Be Released)
 
