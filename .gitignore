@@ -1,0 +1,27 @@
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.vscode/
+.idea/
+.env
+.venv/
+venv/
+env/
+
+# Data and generated artifacts
+datasets/
+outputs/
+runs/
+.cometml-runs/
+wandb/
+*.log
+
+# Model weights
+*.pt
+*.pth
+*.ckpt
+*.onnx
+!checkpoints/README.md
