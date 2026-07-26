@@ -11,7 +11,7 @@ Infrared images provide stable thermal cues under challenging illumination, whil
 ## Overall framework
 
 <p align="center">
-  <img src="assets/tptaf_framework.svg" alt="Overall framework of TPTAF" width="100%">
+  <img src="assets/tptaf_framework.jpg" alt="Overall framework of TPTAF" width="100%">
 </p>
 
 ## Core components
