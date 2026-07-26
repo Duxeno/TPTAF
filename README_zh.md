@@ -6,7 +6,7 @@
 
 ## 论文简介
 
-红外图像能够在复杂环境和弱光条件下提供稳定的热目标信息，可见光图像则保留丰富的纹理与场景结构。TPTAF 将检测语义作为任务先验，引导表示层面的跨模态特征交互。解耦编码器（DE）首先将每个模态组织到结构空间和判别空间；随后由红外—可见光联合特征提取检测相关语义，并进一步生成任务先验；三元注意力模块（TAM）在跨模态交互中协调结构约束、判别细节和检测先验信息。联合训练过程中，不确定性加权学习（UWL）用于平衡融合目标与检测目标。
+TPTAF 将检测语义作为任务先验，引导表示层面的红外—可见光特征交互。解耦编码器将每个模态组织到结构空间和判别空间；由红外—可见光混合特征提取的检测语义被转换为先验信息，并通过三元注意力模块（TAM）与解耦表示进行交互。联合训练过程中，不确定性加权学习（UWL）用于平衡三项融合损失和三项检测损失。
 
 ## 整体框架
 
@@ -14,62 +14,75 @@
   <img src="assets/tptaf_framework.jpg" alt="TPTAF整体框架" width="100%">
 </p>
 
+框架包含两条并行的特征提取路径：单模态特征分解和多模态检测语义提取。两条路径产生的表示由 TAM 进行检测先验引导的跨模态交互。
+
 ## 核心组成
 
-- **DE（Decoupled Encoder）**：构建结构表示与判别表示。
-- **PCSB**：增强相位一致的结构信息。
-- **DDEB**：强化判别性高频细节。
-- **Detection Semantics Extractor**：提取与目标检测相关的语义信息。
-- **DPG（Detection Prior Generator）**：将检测语义转换为任务先验。
-- **TAM（Tripartite Attention Module）**：融合结构特征、判别特征与检测先验。
-- **Decoder**：重建最终融合图像。
-- **UWL（Uncertainty-Weighted Learning）**：平衡三项融合损失和三项检测损失。
+- **解耦编码器（DE）**：构建结构特征空间与判别特征空间。
+- **相位一致结构块（PCSB）**：从低频特征中保留与相位相关的结构组织。
+- **判别细节增强块（DDEB）**：增强高频细节响应与局部对比度。
+- **检测语义提取器**：从红外—可见光混合特征中形成检测相关语义。
+- **检测先验生成器（DPG）**：为 TAM 提供温度、空间先验和稀疏采样参数。
+- **三元注意力模块（TAM）**：协调结构约束、判别细节和检测先验信息。
+- **不确定性加权学习（UWL）**：平衡 `L_sime`、`L_deco`、`L_grad`、`L_box`、`L_cls` 和 `L_dfl`。
 
-## 发布内容
+## 发布代码
 
-本仓库包含 TPTAF 的核心代码实现，包括：
+本仓库包含 TPTAF 的核心代码实现：
 
-- DE、PCSB、DDEB、DPG、TAM、Decoder 和 UWL 等网络模块；
-- 融合—检测联合接口；
-- 检测侧预处理与外部检测器接口定义；
-- 配对数据读取、推理、验证、融合指标与检测指标；
-- 配置模板与伪代码说明。
+- PCSB、DDEB、GLA、DPG、TAM 与重建解码器；
+- 检测输入预处理与外部检测器接口；
+- 融合—检测联合数据流；
+- 融合损失与六项 UWL；
+- 配对数据和分块推理工具。
 
 ## 论文模块与代码对应
 
-| 论文模块 | 公开代码 |
+| 方法组成 | 代码 |
 |---|---|
-| TPTAF 主网络 | `src/tptaf/model.py::TPTAF` |
-| 解耦编码器（DE） | `src/tptaf/model.py::DecoupledEncoder` |
-| 相位一致结构块（PCSB） | `src/tptaf/modules.py::PhaseCoherentStructureBlock` |
-| 判别细节增强块（DDEB） | `src/tptaf/modules.py::DiscriminativeDetailEnhancementBlock` |
-| 检测输入预处理 | `src/tptaf/detector.py::DetectionInputPreprocessor` |
-| 外部检测器接口 | `src/tptaf/detector.py::DetectionSemanticsProvider` |
-| 检测先验生成器（DPG） | `src/tptaf/modules.py::DetectionPriorGenerator` |
-| 三元注意力模块（TAM） | `src/tptaf/modules.py::TripartiteAttention` |
-| 融合—检测联合接口 | `src/tptaf/joint.py::JointTPTAF` |
-| 融合损失与六项 UWL | `src/tptaf/losses.py` |
-| 验证流程 | `src/tptaf/validation.py`、`tools/val.py`、`val.py` |
-| 融合指标 | `src/tptaf/metrics.py` |
-| 检测指标 | `src/tptaf/detection_metrics.py` |
+| TPTAF 主网络与 DE | `src/tptaf/model.py` |
+| PCSB、DDEB、GLA、DPG 与 TAM | `src/tptaf/modules.py` |
+| 检测预处理与检测器接口 | `src/tptaf/detector.py` |
+| 融合—检测联合接口 | `src/tptaf/joint.py` |
+| 融合损失与 UWL | `src/tptaf/losses.py` |
+| 配对数据工具 | `src/tptaf/data.py` |
+| 分块推理 | `src/tptaf/inference.py` |
+| 概念数据流 | `docs/PSEUDOCODE.md` |
 
-## 验证
-
-仓库提供完整的协议化验证流程，包括图像配对、融合指标、检测指标以及结果汇总导出。
-
-示例：
+## 安装
 
 ```bash
-python tools/val.py \
-  --fused-dir /path/to/fused \
-  --data-root /path/to/dataset \
-  --split val \
-  --output-dir outputs/tptaf_validation
+git clone https://github.com/Duxeno/TPTAF.git
+cd TPTAF
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 ```
 
-## 论文评估范围
+Windows PowerShell：
 
-论文在 **M3FD、RoadScene、AVMS 和 MSRS** 上评估融合质量，并采用 **YOLOv8s** 与 **SegFormer-B1** 分别进行目标检测和语义分割评估。
+```powershell
+.venv\Scripts\Activate.ps1
+```
+
+## 最小前向示例
+
+```python
+import torch
+from src.tptaf.model import TPTAF
+
+model = TPTAF()
+infrared = torch.rand(1, 1, 256, 256)
+visible = torch.rand(1, 1, 256, 256)
+detection_semantics = torch.rand(1, 64, 32, 32)
+
+output = model(infrared, visible, detection_semantics)
+print(output.fused.shape)
+```
+
+## 论文评估设置
+
+论文在 M3FD 上训练 TPTAF，并在 M3FD、RoadScene、AVMS 和 MSRS 上评估融合质量。YOLOv8s 和 SegFormer-B1 分别用于下游目标检测与语义分割评估。TPTAF 使用的检测语义来自检测监督，语义分割属于下游评估设置。
 
 ## 引用
 
@@ -85,4 +98,4 @@ python tools/val.py \
 
 ## 许可证
 
-本仓库中的 TPTAF 原创代码采用 [MIT License](LICENSE)。第三方依赖、数据集、检测器实现及预训练权重仍遵循其各自许可证。
+本仓库中的 TPTAF 原创代码采用 [MIT License](LICENSE)。第三方资源说明见 `LICENSE_NOTICE.md`。
