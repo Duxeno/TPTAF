@@ -1,0 +1,30 @@
+cff-version: 1.2.0
+message: "If you use this code, please cite the TPTAF paper."
+title: "TPTAF Core Method Code"
+type: software
+authors:
+  - family-names: Du
+    given-names: Xuyang
+  - family-names: Yao
+    given-names: Xiwen
+  - family-names: Zang
+    given-names: Ankang
+  - family-names: Cheng
+    given-names: Gong
+repository-code: "https://github.com/Duxeno/TPTAF"
+license: MIT
+preferred-citation:
+  type: article
+  title: "TPTAF: Task-Prior Tripartite Attention for Infrared and Visible Image Fusion"
+  authors:
+    - family-names: Du
+      given-names: Xuyang
+    - family-names: Yao
+      given-names: Xiwen
+    - family-names: Zang
+      given-names: Ankang
+    - family-names: Cheng
+      given-names: Gong
+  journal: "IEEE Transactions on Image Processing"
+  year: 2026
+  doi: "10.1109/TIP.2026.3709518"
