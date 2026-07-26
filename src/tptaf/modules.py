@@ -1,7 +1,6 @@
-"""Core TPTAF modules: embedding, PCSB, DDEB, DPG and TAM."""
+"""Core TPTAF modules: embedding, PCSB, DDEB, GLA, DPG, and TAM."""
 from __future__ import annotations
 import math
-from typing import Tuple
 import torch
 from torch import Tensor, nn
 import torch.nn.functional as F
@@ -12,7 +11,7 @@ class DepthwiseSeparableConv(nn.Module):
         layers=[nn.Conv2d(in_channels,in_channels,kernel_size,stride,p,groups=in_channels,bias=False),nn.BatchNorm2d(in_channels),nn.Conv2d(in_channels,out_channels,1,bias=False),nn.BatchNorm2d(out_channels)]
         if activation: layers.append(nn.SiLU(inplace=True))
         self.block=nn.Sequential(*layers)
-    def forward(self,x): return self.block(x)
+    def forward(self,x:Tensor)->Tensor: return self.block(x)
 
 def _pe(c,h,w,device,dtype):
     if c%4: raise ValueError('channels must be divisible by 4')
@@ -30,7 +29,7 @@ class HaarDWT(nn.Module):
         super().__init__(); f=torch.tensor([[[1.,1.],[1.,1.]],[[-1.,-1.],[1.,1.]],[[-1.,1.],[-1.,1.]],[[1.,-1.],[-1.,1.]]])/2; self.register_buffer('filters',f[:,None],persistent=False)
     def forward(self,x):
         b,c,h,w=x.shape
-        if h%2 or w%2: x=F.pad(x,(0,w%2,0,h%2),mode='reflect')
+        if h%2 or w%2: x=F.pad(x,(0,w%2,0,h%2),mode='replicate')
         y=F.conv2d(x,self.filters.repeat(c,1,1,1).to(x.dtype),stride=2,groups=c).reshape(b,c,4,x.shape[-2]//2,x.shape[-1]//2)
         return y[:,:,0],y[:,:,1],y[:,:,2],y[:,:,3]
 
@@ -64,14 +63,46 @@ class DiscriminativeDetailEnhancementBlock(nn.Module):
     def forward(self,lh,hl,hh,output_size):
         x=torch.cat([F.interpolate(b,size=output_size,mode='bilinear',align_corners=False) for b in (lh,hl,hh)],1); return self.g(self.se(self.db(x)),residual=True)
 
+def _partition(x,ws):
+    b,h,w,c=x.shape; return x.view(b,h//ws,ws,w//ws,ws,c).permute(0,1,3,2,4,5).reshape(-1,ws*ws,c)
+def _reverse(x,ws,b,h,w):
+    c=x.shape[-1]; return x.view(b,h//ws,w//ws,ws,ws,c).permute(0,1,3,2,4,5).reshape(b,h,w,c)
+
+class WindowSelfAttention(nn.Module):
+    def __init__(self,c,num_heads=4,window_size=8,shift_size=0):
+        super().__init__()
+        if c%num_heads: raise ValueError('channels must be divisible by num_heads')
+        self.c=c; self.h=num_heads; self.d=c//num_heads; self.ws=window_size; self.shift=shift_size; self.scale=self.d**-.5
+        self.norm=nn.LayerNorm(c); self.qkv=nn.Linear(c,3*c); self.proj=nn.Linear(c,c)
+    def _mask(self,h,w,device):
+        if not self.shift: return None
+        m=torch.zeros((1,h,w,1),device=device); n=0; ws=self.ws; s=self.shift
+        for ys in (slice(0,-ws),slice(-ws,-s),slice(-s,None)):
+            for xs in (slice(0,-ws),slice(-ws,-s),slice(-s,None)):
+                m[:,ys,xs,:]=n; n+=1
+        m=_partition(m,ws).squeeze(-1); m=m[:,None,:]-m[:,:,None]
+        return m.masked_fill(m!=0,-100.).masked_fill(m==0,0.)
+    def forward(self,x):
+        b,c,h,w=x.shape; ws=self.ws; ph=(ws-h%ws)%ws; pw=(ws-w%ws)%ws
+        y=F.pad(x,(0,pw,0,ph)).permute(0,2,3,1); hp,wp=y.shape[1:3]
+        if self.shift: y=torch.roll(y,(-self.shift,-self.shift),(1,2))
+        win=_partition(y,ws); z=self.norm(win); qkv=self.qkv(z).reshape(z.shape[0],z.shape[1],3,self.h,self.d).permute(2,0,3,1,4); q,k,v=qkv
+        a=(q@k.transpose(-2,-1))*self.scale; mask=self._mask(hp,wp,x.device)
+        if mask is not None:
+            nw=mask.shape[0]; a=a.view(b,nw,self.h,ws*ws,ws*ws)+mask[None,:,None]; a=a.view(-1,self.h,ws*ws,ws*ws)
+        a=a.softmax(-1); out=(a@v).transpose(1,2).reshape(z.shape[0],z.shape[1],c); out=self.proj(out)+win
+        out=_reverse(out,ws,b,hp,wp)
+        if self.shift: out=torch.roll(out,(self.shift,self.shift),(1,2))
+        return out[:,:h,:w].permute(0,3,1,2).contiguous()
+
 class GlobalLocalAttention(nn.Module):
     def __init__(self,c,num_heads=4,window_size=8):
-        super().__init__(); self.norm=nn.BatchNorm2d(c); self.attn=nn.MultiheadAttention(c,num_heads,batch_first=True); self.local=DepthwiseSeparableConv(c,c,3); self.mix=nn.Conv2d(2*c,c,1)
+        super().__init__(); self.w1=WindowSelfAttention(c,num_heads,window_size,0); self.w2=WindowSelfAttention(c,num_heads,window_size,window_size//2); self.local=DepthwiseSeparableConv(c,c,3); self.global_gate=nn.Sequential(nn.AdaptiveAvgPool2d(1),nn.Conv2d(c,c,1),nn.Sigmoid()); self.mix=nn.Conv2d(3*c,c,1)
     def forward(self,x):
-        b,c,h,w=x.shape; t=self.norm(x).flatten(2).transpose(1,2); a,_=self.attn(t,t,t,need_weights=False); a=a.transpose(1,2).reshape(b,c,h,w); return x+F.silu(self.mix(torch.cat((a,self.local(x)),1)))
+        window=self.w2(self.w1(x)); local=self.local(x); global_context=x*self.global_gate(x); return x+F.silu(self.mix(torch.cat((window,local,global_context),1)))
 
 class DetectionPriorGenerator(nn.Module):
-    def __init__(self,c,num_heads=4,num_points=8,window_size=8):
+    def __init__(self,c,num_heads=4,num_points=8):
         super().__init__(); self.num_heads=num_heads; self.num_points=num_points; self.temp=nn.Sequential(nn.AdaptiveAvgPool2d(1),nn.Conv2d(c,num_heads,1)); self.support=nn.Conv2d(c,1,1); self.ref=nn.Conv2d(c,2,1); self.off=nn.Conv2d(c,2*num_points,3,padding=1)
     def forward(self,x):
         b,_,h,w=x.shape; t=F.softplus(self.temp(x))+.05; p=torch.softmax(self.support(x).flatten(2),-1).reshape(b,1,h,w); r=torch.sigmoid(self.ref(x)); o=.25*torch.tanh(self.off(x)).view(b,self.num_points,2,h,w); return t,p,(r[:,None]+o).clamp(0,1)
@@ -81,7 +112,9 @@ def _sample(f,pos):
 
 class TripartiteAttention(nn.Module):
     def __init__(self,channels,detection_channels,num_heads=4,num_points=8,window_size=8,prior_strength=1.0):
-        super().__init__(); self.c=channels; self.h=num_heads; self.d=channels//num_heads; self.m=num_points; self.beta=prior_strength
-        self.ir=nn.Sequential(nn.Conv2d(2*channels,channels,1),GlobalLocalAttention(channels,num_heads,window_size)); self.vi=nn.Sequential(nn.Conv2d(2*channels,channels,1),GlobalLocalAttention(channels,num_heads,window_size)); self.q=nn.Conv2d(2*channels,channels,1); self.v=nn.Conv2d(2*channels,channels,1); self.kd=nn.Conv2d(2*channels,channels,1); self.kt=nn.Conv2d(detection_channels,channels,1); self.dpg=DetectionPriorGenerator(channels,num_heads,num_points,window_size); self.out=nn.Conv2d(channels,channels,1)
+        super().__init__()
+        if channels%num_heads: raise ValueError('channels must be divisible by num_heads')
+        self.c=channels; self.h=num_heads; self.d=channels//num_heads; self.m=num_points; self.beta=prior_strength
+        self.ir=nn.Sequential(nn.Conv2d(2*channels,channels,1),GlobalLocalAttention(channels,num_heads,window_size)); self.vi=nn.Sequential(nn.Conv2d(2*channels,channels,1),GlobalLocalAttention(channels,num_heads,window_size)); self.q=nn.Conv2d(2*channels,channels,1); self.v=nn.Conv2d(2*channels,channels,1); self.kd=nn.Conv2d(2*channels,channels,1); self.kt=nn.Conv2d(detection_channels,channels,1); self.dpg=DetectionPriorGenerator(channels,num_heads,num_points); self.out=nn.Conv2d(channels,channels,1)
     def forward(self,si,di,sv,dv,det):
-        size=si.shape[-2:]; det=F.interpolate(det,size=size,mode='bilinear',align_corners=False); fi=self.ir(torch.cat((si,di),1)); fv=self.vi(torch.cat((sv,dv),1)); q=self.q(torch.cat((fi,fv),1)); v=self.v(torch.cat((fi,fv),1)); kd=self.kd(torch.cat((di,dv),1)); kt=self.kt(det); temp,prior,pos=self.dpg(kt); sk=_sample(kd,pos); vv=_sample(v,pos); sp=_sample(prior,pos).squeeze(1); b,_,h,w=q.shape; q=q.view(b,self.h,self.d,h,w); sk=sk.view(b,self.h,self.d,self.m,h,w); vv=vv.view(b,self.h,self.d,self.m,h,w); score=(q.unsqueeze(3)*sk).sum(2)/torch.sqrt(self.d*temp).clamp_min(1e-8).unsqueeze(2)+self.beta*torch.log(sp[:,None]+1e-8); weight=torch.softmax(score,2); y=(weight.unsqueeze(2)*vv).sum(3).reshape(b,self.c,h,w); return self.out(y)+.5*(fi+fv),{'temperature':temp,'spatial_prior':prior,'sampling_positions':pos,'attention_weights':weight}
+        size=si.shape[-2:]; det=F.interpolate(det,size=size,mode='bilinear',align_corners=False); fi=self.ir(torch.cat((si,di),1)); fv=self.vi(torch.cat((sv,dv),1)); q=self.q(torch.cat((fi,fv),1)); v=self.v(torch.cat((fi,fv),1)); kd=self.kd(torch.cat((di,dv),1)); kt=self.kt(det); temp,prior,pos=self.dpg(kt); sk=_sample(kd,pos); vv=_sample(v,pos); sp=_sample(prior,pos).squeeze(1); b,_,h,w=q.shape; q=q.view(b,self.h,self.d,h,w); sk=sk.view(b,self.h,self.d,self.m,h,w); vv=vv.view(b,self.h,self.d,self.m,h,w); score=(q.unsqueeze(3)*sk).sum(2)/(math.sqrt(self.d)*temp.unsqueeze(2)).clamp_min(1e-8)+self.beta*torch.log(sp[:,None].clamp_min(1e-8)); weight=torch.softmax(score,2); y=(weight.unsqueeze(2)*vv).sum(3).reshape(b,self.c,h,w); return self.out(y)+.5*(fi+fv),{'temperature':temp,'spatial_prior':prior,'sampling_positions':pos,'attention_weights':weight}
