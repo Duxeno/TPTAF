@@ -11,7 +11,7 @@
 ## 整体框架
 
 <p align="center">
-  <img src="assets/tptaf_framework.svg" alt="TPTAF整体框架" width="100%">
+  <img src="assets/tptaf_framework.jpg" alt="TPTAF整体框架" width="100%">
 </p>
 
 ## 核心组成
